@@ -4,16 +4,13 @@ package filefabric
 
 /*
 Q is direct upload support good to implement? Or should it be optional?
+A for a later revision
 
 Can't upload zero length files these upload as a single space. We set
 these files to have the emptyMimeType and recognise that in Size() and
 Open() to work around this.
 
 FIXME oauth-like flow
-
-FIXME don't know what goes in getFolderQuota so About doesn't work
-
-Q What is the best way to read the total/used/free space available?
 
 Failing tests
 -------------
@@ -110,8 +107,14 @@ func init() {
 			Help:     "URL of File Fabric to connect to",
 			Required: true,
 			Examples: []fs.OptionExample{{
+				Value: "https://storagemadeeasy.com",
+				Help:  "Storage Made Easy US",
+			}, {
+				Value: "https://eu.storagemadeeasy.com",
+				Help:  "Storage Made Easy EU",
+			}, {
 				Value: "https://yourfabric.smestorage.com",
-				Help:  "Connect to yourfabric",
+				Help:  "Connect to your File Fabric",
 			}},
 		}, {
 			Name: "root_folder_id",
@@ -427,29 +430,32 @@ func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 		return nil, errors.New("url must be set")
 	}
 
-	tokenExpiry, err := time.Parse(time.RFC3339, opt.TokenExpiry)
-	if err != nil {
-		fs.Errorf(nil, "Failed to parse token_expiry option: %v", err)
-	}
-
 	root = parsePath(root)
 
 	client := fshttp.NewClient(fs.Config)
 
 	f := &Fs{
-		name:        name,
-		root:        root,
-		opt:         *opt,
-		m:           m,
-		srv:         rest.NewClient(client).SetRoot(opt.URL),
-		pacer:       fs.NewPacer(pacer.NewDefault(pacer.MinSleep(minSleep), pacer.MaxSleep(maxSleep), pacer.DecayConstant(decayConstant))),
-		token:       opt.Token,
-		tokenExpiry: tokenExpiry,
+		name:  name,
+		root:  root,
+		opt:   *opt,
+		m:     m,
+		srv:   rest.NewClient(client).SetRoot(opt.URL),
+		pacer: fs.NewPacer(pacer.NewDefault(pacer.MinSleep(minSleep), pacer.MaxSleep(maxSleep), pacer.DecayConstant(decayConstant))),
+		token: opt.Token,
 	}
 	f.features = (&fs.Features{
 		CaseInsensitive:         true,
 		CanHaveEmptyDirectories: true,
 	}).Fill(f)
+
+	if opt.TokenExpiry != "" {
+		tokenExpiry, err := time.Parse(time.RFC3339, opt.TokenExpiry)
+		if err != nil {
+			fs.Errorf(nil, "Failed to parse token_expiry option: %v", err)
+		} else {
+			f.tokenExpiry = tokenExpiry
+		}
+	}
 
 	if opt.RootFolderID == "" {
 		opt.RootFolderID = defaultRootID
@@ -941,28 +947,6 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 	return nil
 }
 
-// About gets quota information
-func (f *Fs) _FIXMEAbout(ctx context.Context) (usage *fs.Usage, err error) {
-	/*
-		var info api.EmptyResponse
-		_, err = f.rpc(ctx, "getFolderQuota", params{
-			"fi_id": f.opt.RootFolderID,
-		}, &info, nil)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to read quota info")
-		}
-
-		// FIXME don't know what the result should look like!
-
-		usage = &fs.Usage{
-			// Used:  fs.NewUsageValue(user.SpaceUsed),                    // bytes in use
-			// Total: fs.NewUsageValue(user.SpaceAmount),                  // bytes total
-			// Free:  fs.NewUsageValue(user.SpaceAmount - user.SpaceUsed), // bytes free
-		}
-	*/
-	return usage, nil
-}
-
 // CleanUp empties the trash
 func (f *Fs) CleanUp(ctx context.Context) (err error) {
 	var info api.EmptyResponse
@@ -1272,10 +1256,9 @@ func (o *Object) MimeType(ctx context.Context) string {
 
 // Check the interfaces are satisfied
 var (
-	_ fs.Fs     = (*Fs)(nil)
-	_ fs.Purger = (*Fs)(nil)
-	_ fs.Copier = (*Fs)(nil)
-	//_ fs.Abouter         = (*Fs)(nil)
+	_ fs.Fs              = (*Fs)(nil)
+	_ fs.Purger          = (*Fs)(nil)
+	_ fs.Copier          = (*Fs)(nil)
 	_ fs.Mover           = (*Fs)(nil)
 	_ fs.DirMover        = (*Fs)(nil)
 	_ fs.DirCacheFlusher = (*Fs)(nil)
