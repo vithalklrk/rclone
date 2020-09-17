@@ -594,6 +594,10 @@ OUTER:
 				break OUTER
 			}
 		}
+		// if didn't get any items then exit
+		if len(info.Items) == 0 {
+			break
+		}
 		n += len(info.Items)
 		if n >= info.Total {
 			break
