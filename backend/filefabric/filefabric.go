@@ -15,19 +15,8 @@ FIXME oauth-like flow
 Failing tests
 -------------
 
-Caused by dir file /move time change
-
-            --- FAIL: TestIntegration/FsMkdir/FsPutFiles/FsDirMove (316.52s)
-            --- FAIL: TestIntegration/FsMkdir/FsPutFiles/ObjectModTime (0.43s)
-            --- FAIL: TestIntegration/FsMkdir/FsPutFiles/FsIsFile (1.17s)
-
-Unknown
-
-            --- FAIL: TestIntegration/FsMkdir/FsPutFiles/FromRoot (21.33s)
-
-Should be fixed
-
-            --- FAIL: TestIntegration/FsMkdir/FsPutFiles/ObjectAbout (0.00s)
+Precision 1 hour!
+            --- FAIL: TestIntegration/FsMkdir/FsPutFiles/FsPrecision (0.00s)
 
 
 API limitations
@@ -87,13 +76,14 @@ import (
 )
 
 const (
-	minSleep      = 20 * time.Millisecond
-	maxSleep      = 10 * time.Second
-	decayConstant = 2                // bigger for slower decay, exponential
-	listChunks    = 1000             // chunk size to read directory listings
-	tokenLifeTime = 55 * time.Minute // 1 hour minus a bit of leeway
-	defaultRootID = ""               // default root ID
-	emptyMimeType = "application/vnd.rclone.empty.file"
+	minSleep         = 20 * time.Millisecond
+	maxSleep         = 10 * time.Second
+	decayConstant    = 2                // bigger for slower decay, exponential
+	listChunks       = 1000             // chunk size to read directory listings
+	tokenLifeTime    = 55 * time.Minute // 1 hour minus a bit of leeway
+	defaultRootID    = ""               // default root ID
+	emptyMimeType    = "application/vnd.rclone.empty.file"
+	defaultPrecision = fs.Duration(1 * time.Hour)
 )
 
 // Register with Fs
@@ -135,6 +125,16 @@ one.
 These tokens are normally valid for several years.
 `,
 		}, {
+			Name: "precision",
+			Help: `Precision of the modification time
+
+This sets the precision of the modification time that the backend
+reports. Some versions of the FileFabric change the time rclone
+sets slightly - the leeway can be adjusted here.
+`,
+			Advanced: true,
+			Default:  defaultPrecision,
+		}, {
 			Name: "token",
 			Help: `Session Token
 
@@ -169,6 +169,7 @@ type Options struct {
 	Token          string               `config:"token"`
 	TokenExpiry    string               `config:"token_expiry"`
 	Enc            encoder.MultiEncoder `config:"encoding"`
+	Precision      fs.Duration          `config:"precision"`
 }
 
 // Fs represents a remote filefabric
@@ -752,7 +753,7 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 
 // Precision return the precision of this Fs
 func (f *Fs) Precision() time.Duration {
-	return time.Second
+	return time.Duration(f.opt.Precision)
 }
 
 // Copy src to this remote using server side copy operations.
