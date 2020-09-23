@@ -15,8 +15,19 @@ FIXME oauth-like flow
 Failing tests
 -------------
 
+test_all -backends filefabric -timeout 2h -list-retries 1 -verbose
+
 Precision 1 hour!
             --- FAIL: TestIntegration/FsMkdir/FsPutFiles/FsPrecision (0.00s)
+
+
+backend		TestIntegration/FsMkdir/FsPutFiles/FsPrecision
+                TestIntegration/FsMkdir/FsRootCollapse - FIXED
+fs/operations	TestCopyFileCompareDest
+                TestCopyFileCopyDest
+fs/sync		TestSyncCompareDest
+                TestSyncCopyDest
+vfs		TestFileRename/minimal,forceCache=true, TestFileRename/writes,forceCache=false, TestFileRename/writes,forceCache=true, TestFileRename/full,forceCache=false
 
 
 API limitations
@@ -1036,6 +1047,9 @@ func (o *Object) readMetaData(ctx context.Context) (err error) {
 	}
 	rootID, err := o.fs.dirCache.RootID(ctx, false)
 	if err != nil {
+		if err == fs.ErrorDirNotFound {
+			err = fs.ErrorObjectNotFound
+		}
 		return err
 	}
 	info, err := o.fs.readMetaDataForPath(ctx, rootID, o.remote)
