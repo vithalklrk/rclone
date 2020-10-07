@@ -98,6 +98,16 @@ type GetTokenByAuthTokenResponse struct {
 	AutoLoginCode      string `json:"autologincode"`
 }
 
+// ApplianceInfo is the response to getApplianceInfo
+type ApplianceInfo struct {
+	Status
+	Sitetitle            string `json:"sitetitle"`
+	OauthLoginSupport    string `json:"oauthloginsupport"`
+	IsAppliance          string `json:"isappliance"`
+	SoftwareVersion      string `json:"softwareversion"`
+	SoftwareVersionLabel string `json:"softwareversionlabel"`
+}
+
 // GetFolderContentsResponse is returned from getFolderContents
 type GetFolderContentsResponse struct {
 	Status

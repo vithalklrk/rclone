@@ -3,6 +3,8 @@
 package filefabric
 
 /*
+Docs: https://product-demo.smestorage.com/?p=apidoc
+
 Q is direct upload support good to implement? Or should it be optional?
 A for a later revision
 
@@ -15,11 +17,7 @@ FIXME oauth-like flow
 Failing tests
 -------------
 
-test_all -backends filefabric -timeout 2h -list-retries 1 -verbose
-
-Precision 1 hour!
-            --- FAIL: TestIntegration/FsMkdir/FsPutFiles/FsPrecision (0.00s)
-
+test_all -backends filefabric -timeout 2h -verbose
 
 backend		TestIntegration/FsMkdir/FsPutFiles/FsPrecision
                 TestIntegration/FsMkdir/FsRootCollapse - FIXED
@@ -32,9 +30,6 @@ vfs		TestFileRename/minimal,forceCache=true, TestFileRename/writes,forceCache=fa
 
 API limitations
 ---------------
-
-Can't change the name of a file when copying which limits the
-usefulness as can't copy a file to the same directory.
 
 Can't set mime type in doUploadInit ("fi_contenttype")
 - being ignored as Content-Type: in PUT also
@@ -87,14 +82,13 @@ import (
 )
 
 const (
-	minSleep         = 20 * time.Millisecond
-	maxSleep         = 10 * time.Second
-	decayConstant    = 2                // bigger for slower decay, exponential
-	listChunks       = 1000             // chunk size to read directory listings
-	tokenLifeTime    = 55 * time.Minute // 1 hour minus a bit of leeway
-	defaultRootID    = ""               // default root ID
-	emptyMimeType    = "application/vnd.rclone.empty.file"
-	defaultPrecision = fs.Duration(1 * time.Hour)
+	minSleep      = 20 * time.Millisecond
+	maxSleep      = 10 * time.Second
+	decayConstant = 2                // bigger for slower decay, exponential
+	listChunks    = 1000             // chunk size to read directory listings
+	tokenLifeTime = 55 * time.Minute // 1 hour minus a bit of leeway
+	defaultRootID = ""               // default root ID
+	emptyMimeType = "application/vnd.rclone.empty.file"
 )
 
 // Register with Fs
@@ -136,16 +130,6 @@ one.
 These tokens are normally valid for several years.
 `,
 		}, {
-			Name: "precision",
-			Help: `Precision of the modification time
-
-This sets the precision of the modification time that the backend
-reports. Some versions of the FileFabric change the time rclone
-sets slightly - the leeway can be adjusted here.
-`,
-			Advanced: true,
-			Default:  defaultPrecision,
-		}, {
 			Name: "token",
 			Help: `Session Token
 
@@ -158,6 +142,13 @@ Don't set this value - rclone will set it automatically.
 		}, {
 			Name: "token_expiry",
 			Help: `Token expiry time
+
+Don't set this value - rclone will set it automatically.
+`,
+			Advanced: true,
+		}, {
+			Name: "version",
+			Help: `Version read from the file fabric
 
 Don't set this value - rclone will set it automatically.
 `,
@@ -179,24 +170,26 @@ type Options struct {
 	PermanentToken string               `config:"permanent_token"`
 	Token          string               `config:"token"`
 	TokenExpiry    string               `config:"token_expiry"`
+	Version        string               `config:"version"`
 	Enc            encoder.MultiEncoder `config:"encoding"`
-	Precision      fs.Duration          `config:"precision"`
 }
 
 // Fs represents a remote filefabric
 type Fs struct {
-	name         string             // name of this remote
-	root         string             // the path we are working on
-	opt          Options            // parsed options
-	features     *fs.Features       // optional features
-	m            configmap.Mapper   // to save config
-	srv          *rest.Client       // the connection to the one drive server
-	dirCache     *dircache.DirCache // Map of directory path to directory id
-	pacer        *fs.Pacer          // pacer for API calls
-	tokenMu      sync.Mutex         // hold when reading the token
-	token        string             // current access token
-	tokenExpiry  time.Time          // time the current token expires
-	tokenExpired int32              // read and written with atomic
+	name            string             // name of this remote
+	root            string             // the path we are working on
+	opt             Options            // parsed options
+	features        *fs.Features       // optional features
+	m               configmap.Mapper   // to save config
+	srv             *rest.Client       // the connection to the one drive server
+	dirCache        *dircache.DirCache // Map of directory path to directory id
+	pacer           *fs.Pacer          // pacer for API calls
+	tokenMu         sync.Mutex         // hold when reading the token
+	token           string             // current access token
+	tokenExpiry     time.Time          // time the current token expires
+	tokenExpired    int32              // read and written with atomic
+	canCopyWithName bool               // set if detected that can use fi_name in copy
+	precision       time.Duration      // precision reported
 }
 
 // Object describes a filefabric object
@@ -334,6 +327,20 @@ func (f *Fs) readMetaDataForPath(ctx context.Context, rootID string, path string
 	*/
 }
 
+// Get the appliance info so we can set Version
+func (f *Fs) getApplianceInfo(ctx context.Context) error {
+	var applianceInfo api.ApplianceInfo
+	_, err := f.rpc(ctx, "getApplianceInfo", params{
+		"token": "*",
+	}, &applianceInfo, nil)
+	if err != nil {
+		return errors.Wrap(err, "failed to read appliance version")
+	}
+	f.opt.Version = applianceInfo.SoftwareVersionLabel
+	f.m.Set("version", f.opt.Version)
+	return nil
+}
+
 // Gets the token or gets a new one if necessary
 func (f *Fs) getToken(ctx context.Context) (token string, err error) {
 	f.tokenMu.Lock()
@@ -376,6 +383,14 @@ func (f *Fs) getToken(ctx context.Context) (token string, err error) {
 	f.tokenExpiry = now
 	f.m.Set("token", f.token)
 	f.m.Set("token_expiry", now.Format(time.RFC3339))
+
+	// Read appliance info when we update the token
+	err = f.getApplianceInfo(ctx)
+	if err != nil {
+		return "", err
+	}
+	f.setCapabilities()
+
 	return f.token, nil
 }
 
@@ -459,6 +474,13 @@ func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 		CaseInsensitive:         true,
 		CanHaveEmptyDirectories: true,
 	}).Fill(f)
+	if f.opt.Version == "" {
+		err = f.getApplianceInfo(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	f.setCapabilities()
 
 	if opt.TokenExpiry != "" {
 		tokenExpiry, err := time.Parse(time.RFC3339, opt.TokenExpiry)
@@ -497,6 +519,22 @@ func NewFs(name, root string, m configmap.Mapper) (fs.Fs, error) {
 		}
 	}
 	return f, errReturn
+}
+
+// set the capabilities of this version of software
+func (f *Fs) setCapabilities() {
+	version := f.opt.Version
+	if version == "" {
+		version = "0000.00"
+	}
+	if version >= "2006.02" {
+		f.precision = time.Second
+		f.canCopyWithName = true
+	} else {
+		// times can be altered this much on renames
+		f.precision = 1 * time.Hour
+		f.canCopyWithName = false
+	}
 }
 
 // Return an Object from a path
@@ -764,7 +802,7 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 
 // Precision return the precision of this Fs
 func (f *Fs) Precision() time.Duration {
-	return time.Duration(f.opt.Precision)
+	return f.precision
 }
 
 // Copy src to this remote using server side copy operations.
@@ -793,19 +831,22 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		return nil, err
 	}
 
-	if leaf != path.Base(srcObj.remote) {
+	if !f.canCopyWithName && leaf != path.Base(srcObj.remote) {
 		fs.Debugf(src, "Can't copy - can't change the name of files")
 		return nil, fs.ErrorCantCopy
 	}
 
 	// Copy the object
 	var info api.FileResponse
-	_, err = f.rpc(ctx, "doCopyFile", params{
+	p := params{
 		"fi_id":  srcObj.id,
 		"fi_pid": directoryID,
 		"force":  "y",
-		//"fi_name": f.opt.Enc.FromStandardName(leaf),
-	}, &info, nil)
+	}
+	if f.canCopyWithName {
+		p["fi_name"] = f.opt.Enc.FromStandardName(leaf)
+	}
+	_, err = f.rpc(ctx, "doCopyFile", p, &info, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to copy file")
 	}
