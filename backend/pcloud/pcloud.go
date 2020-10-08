@@ -885,6 +885,11 @@ func (f *Fs) About(ctx context.Context) (usage *fs.Usage, err error) {
 
 // Hashes returns the supported hash sets.
 func (f *Fs) Hashes() hash.Set {
+	// Only SHA1s in EU region apparently
+	// https://forum.rclone.org/t/pcloud-to-local-no-hashes-in-common/19440
+	if f.opt.Hostname == "eapi.pcloud.com" {
+		return hash.Set(hash.SHA1)
+	}
 	return hash.Set(hash.MD5 | hash.SHA1)
 }
 
