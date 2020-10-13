@@ -12,12 +12,14 @@ import (
 
 var (
 	dedupeMode = operations.DeduplicateInteractive
+	byHash     = false
 )
 
 func init() {
 	cmd.Root.AddCommand(commandDefinition)
 	cmdFlag := commandDefinition.Flags()
 	flags.FVarP(cmdFlag, &dedupeMode, "dedupe-mode", "", "Dedupe mode interactive|skip|first|newest|oldest|largest|smallest|rename.")
+	flags.BoolVarP(cmdFlag, &byHash, "by-hash", "", false, "Find indentical hashes rather than names")
 }
 
 var commandDefinition = &cobra.Command{
@@ -131,7 +133,7 @@ Or
 		}
 		fdst := cmd.NewFsSrc(args)
 		cmd.Run(false, false, command, func() error {
-			return operations.Deduplicate(context.Background(), fdst, dedupeMode)
+			return operations.Deduplicate(context.Background(), fdst, dedupeMode, byHash)
 		})
 	},
 }
